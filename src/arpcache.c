@@ -13,7 +13,7 @@ int arpcache_read(const struct iface *ifc, struct hostlist *hl) {
     char line[256], ips[64], hw[64], dev[64];
     unsigned type, flags;
     int n = 0;
-    fgets(line, sizeof line, f);   /* header */
+    if (!fgets(line, sizeof line, f)) { fclose(f); return 0; }   /* header line */
     while (fgets(line, sizeof line, f)) {
         if (sscanf(line, "%63s 0x%x 0x%x %63s %*s %63s", ips, &type, &flags, hw, dev) != 5) continue;
         if (!(flags & 0x2) || strcmp(dev, ifc->name)) continue;   /* ATF_COM: complete entries only */
