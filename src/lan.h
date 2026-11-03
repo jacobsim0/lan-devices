@@ -77,6 +77,7 @@ int iface_detect(const char *want, struct iface *out, char *err, size_t errsz);
 struct cap;
 struct cap *cap_open(const struct iface *ifc, struct hostlist *hl, char *err, size_t errsz);
 struct cap *cap_new(const struct iface *ifc, struct hostlist *hl);      /* no pcap: tests */
+void cap_set_hosts(struct cap *c, struct hostlist *hl);                  /* list that frames are attributed to */
 void cap_frame(struct cap *c, const uint8_t *frame, int len);            /* classify one frame */
 void cap_poll(struct cap *c);                                            /* drain pending frames */
 int  cap_send(struct cap *c, const uint8_t *frame, int len);

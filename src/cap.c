@@ -52,6 +52,9 @@ struct cap *cap_open(const struct iface *ifc, struct hostlist *hl, char *err, si
     return c;
 }
 
+/* Point the capture at the host list for the current scan (watch mode uses a fresh list per cycle). */
+void cap_set_hosts(struct cap *c, struct hostlist *hl) { if (c) c->hl = hl; }
+
 /* Attribute a frame to a neighbour. Pure function of the bytes: used by tests and the fuzzer. */
 void cap_frame(struct cap *c, const uint8_t *b, int len) {
     if (len < 14) return;

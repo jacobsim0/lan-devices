@@ -77,6 +77,7 @@ static int do_add(const char *mac_in, const char *name) {
 
 /* One discovery cycle: who's up (sweep or neighbour tables), then names. */
 static void discover(const struct iface *ifc, struct cap *cap, const struct opts *o, struct hostlist *hl) {
+    cap_set_hosts(cap, hl);               /* watch mode: a new list every cycle */
     struct host *self = hosts_add4(hl, ifc->mac, ifc->ip);
     self->self = true;
     if (ifc->have_ll6) hosts_add6(hl, ifc->mac, &ifc->ll6);

@@ -362,6 +362,13 @@ static void test_cap(void) {
     CHECK(hl.h[1].n6 == 0);
     for (int cut = 0; cut < n + 40; cut++) cap_frame(c, f, cut);
     CHECK(hl.n == 2);
+    /* regression: watch mode re-points the capture at a fresh list each cycle */
+    struct hostlist hl2 = { 0 };
+    cap_set_hosts(c, &hl2);
+    n = eth(f, dev, 0x0806); arp[7] = 2; memcpy(arp + 8, dev, 6); inet_pton(AF_INET, "192.168.0.153", arp + 14);
+    memcpy(f + n, arp, 28); cap_frame(c, f, n + 28);
+    CHECK(hl2.n == 1 && hl.n == 2);
+    free(hl2.h);
     cap_close(c);
     free(hl.h);
 }
