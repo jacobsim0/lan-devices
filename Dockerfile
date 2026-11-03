@@ -1,14 +1,18 @@
 # Build stage: plain gcc + libpcap headers.
 FROM debian:bookworm-slim AS build
-RUN apt-get update && apt-get install -y --no-install-recommends gcc make libc6-dev libpcap-dev ca-certificates curl \
+RUN apt-get update && apt-get install -y --no-install-recommends gcc make libc6-dev libpcap-dev ca-certificates curl ieee-data \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY Makefile ./
 COPY src ./src
 COPY tests ./tests
 RUN make CFLAGS="-O2 -Wall -Wextra -Werror" && make check
-# Vendor names: the IEEE OUI registry, fetched at build time so the image needs no network.
-RUN mkdir -p /oui && curl -fsSL -o /oui/oui.csv https://standards-oui.ieee.org/oui/oui.csv
+# Vendor names: Debian's ieee-data package is the guaranteed copy; a fresher one is
+# fetched from the IEEE if their site answers (it often doesn't), never failing the build.
+RUN mkdir -p /oui && cp /usr/share/ieee-data/oui.csv /oui/oui.csv \
+    && (curl -fsSL --max-time 20 --retry 2 -o /oui/oui.new https://standards-oui.ieee.org/oui/oui.csv \
+        && [ "$(wc -c < /oui/oui.new)" -gt 1000000 ] && mv /oui/oui.new /oui/oui.csv && echo "OUI: live copy" \
+        || echo "OUI: using Debian ieee-data copy")
 
 # Runtime stage: just the binary, libpcap, and the OUI file.
 FROM debian:bookworm-slim
