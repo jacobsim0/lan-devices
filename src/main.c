@@ -102,23 +102,24 @@ int main(int argc, char **argv) {
     }
     qsort(hl.h, hl.n, sizeof *hl.h, by_ip);
 
-    /* 2) names: NetBIOS + mDNS on one poll loop, reverse DNS on threads */
-    rdns_start(&hl);
+    /* 2) names: mDNS, NetBIOS and reverse DNS on one poll loop */
     struct mdns *md = mdns_start(&ifc, &hl);
     struct nbns *nb = nbns_start(&hl);
-    struct pollfd pf[2] = { { mdns_fd(md), POLLIN, 0 }, { nbns_fd(nb), POLLIN, 0 } };
+    struct rdns *rd = rdns_start(&hl);
+    struct pollfd pf[3] = { { mdns_fd(md), POLLIN, 0 }, { nbns_fd(nb), POLLIN, 0 }, { rdns_fd(rd), POLLIN, 0 } };
     double t0 = now_s(), deadline = t0 + listen_s;
     bool requeried = false;
     for (double now; (now = now_s()) < deadline;) {
         int ms = (int)((deadline - now) * 1000);
-        poll(pf, 2, ms < 100 ? ms : 100);
+        poll(pf, 3, ms < 100 ? ms : 100);
         if (pf[0].revents & POLLIN) mdns_recv(md);
         if (pf[1].revents & POLLIN) nbns_recv(nb);
-        if (!requeried && now - t0 > 1.0) { mdns_query(md); nbns_query(nb); requeried = true; }
+        if (pf[2].revents & POLLIN) rdns_recv(rd);
+        if (!requeried && now - t0 > 1.0) { mdns_query(md); nbns_query(nb); rdns_query(rd); requeried = true; }
     }
     mdns_finish(md);
     nbns_finish(nb);
-    rdns_collect(&hl, 0.5);
+    rdns_finish(rd);
 
     /* 3) merge + print */
     struct kvlist aliases = { 0 }, cache = { 0 };
@@ -171,6 +172,8 @@ int main(int argc, char **argv) {
     if (show_vendor && !noui)
         fprintf(stderr, "\nnote: no OUI file for vendor names. Install arp-scan (brew/apt), or:\n"
                         "  curl -o ~/.config/lan-devices/oui.csv https://standards-oui.ieee.org/oui/oui.csv\n");
+    if (g_send_errors)
+        fprintf(stderr, "\nwarning: %u packet(s) could not be sent; results may be incomplete\n", g_send_errors);
     if (passive)
         fprintf(stderr, "\n(passive: only devices already in the ARP table; run with sudo for a full sweep)\n");
     if (unnamed)

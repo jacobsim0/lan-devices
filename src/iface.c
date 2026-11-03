@@ -42,12 +42,24 @@ int iface_detect(const char *want, struct iface *out, char *err, size_t errsz) {
         struct sockaddr_in *a = (struct sockaddr_in *)ifa->ifa_addr;
         struct sockaddr_in *m = (struct sockaddr_in *)ifa->ifa_netmask;
         if (want) { if (strcmp(ifa->ifa_name, want)) continue; }
-        else if (have_dip) { if (a->sin_addr.s_addr != dip.s_addr) continue; }
-        else if (ifa->ifa_flags & IFF_POINTOPOINT) continue;
+        else if (ifa->ifa_flags & IFF_POINTOPOINT) continue;      /* VPN tunnels can't be ARP-scanned */
+        else if (have_dip && a->sin_addr.s_addr != dip.s_addr) continue;
         cpy(out->name, sizeof out->name, ifa->ifa_name);
         out->ip = a->sin_addr;
         out->mask.s_addr = m ? m->sin_addr.s_addr : htonl(0xffffff00);
         found = true;
+    }
+    if (!found && !want && have_dip) {   /* default route is a tunnel: take the first LAN interface instead */
+        for (ifa = ifa0; ifa && !found; ifa = ifa->ifa_next) {
+            if (!ifa->ifa_addr || ifa->ifa_addr->sa_family != AF_INET) continue;
+            if (!(ifa->ifa_flags & IFF_UP) || (ifa->ifa_flags & (IFF_LOOPBACK | IFF_POINTOPOINT))) continue;
+            struct sockaddr_in *a = (struct sockaddr_in *)ifa->ifa_addr;
+            struct sockaddr_in *m = (struct sockaddr_in *)ifa->ifa_netmask;
+            cpy(out->name, sizeof out->name, ifa->ifa_name);
+            out->ip = a->sin_addr;
+            out->mask.s_addr = m ? m->sin_addr.s_addr : htonl(0xffffff00);
+            found = true;
+        }
     }
     if (!found) {
         snprintf(err, errsz, want ? "no IPv4 address on %s" : "no usable IPv4 interface found", want);

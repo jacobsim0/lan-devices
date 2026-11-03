@@ -96,7 +96,7 @@ int arp_scan(struct arp *a, struct hostlist *hl, double linger) {
         for (uint32_t u = lo; u <= hi; u++) {
             if (u == ip || a->seen[u - lo]) continue;
             build(f, a->ifc, htonl(u));
-            pcap_inject(a->p, f, sizeof f);
+            if (pcap_inject(a->p, f, sizeof f) < 0) g_send_errors++;
             usleep(gap_us);
             if (((u - lo) & 15) == 0) pcap_dispatch(a->p, -1, on_pkt, (u_char *)a);
         }

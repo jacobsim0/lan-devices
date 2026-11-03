@@ -66,6 +66,27 @@ socket, so `~/.config/lan-devices/` stays owned by you.
 Devices with randomized private MACs (modern phones) show `(private MAC)` as the
 vendor and rotate over time — that's the phones behaving correctly, not the tool failing.
 
+## Testing
+
+```bash
+make check          # unit tests for every parser (DNS names, TXT, mDNS records, NetBIOS, OUI files, alias store)
+make check-asan     # the same tests under AddressSanitizer + UndefinedBehaviorSanitizer
+make fuzz           # libFuzzer over all parsers for 60 s (needs clang; FUZZ_TIME=N to change)
+```
+
+CI runs the `-Werror` build, the unit tests, the sanitizer run and a 30-second
+fuzz on Ubuntu, plus the build and unit tests on macOS, for every push.
+
+## Limitations
+
+- **IPv4 only.** No IPv6 neighbour discovery; IPv6-only devices are not listed.
+- **One subnet at a time.** The sweep covers the interface's own subnet, up to a /16.
+- **Reverse DNS** asks the resolvers in `/etc/resolv.conf` directly, so `/etc/hosts`
+  entries are not consulted. That keeps lookups bounded by the listen window instead
+  of blocking on a slow resolver.
+- Names depend on what devices advertise. A device that speaks none of mDNS,
+  NetBIOS or DNS shows only its MAC and vendor until you label it.
+
 ## Files and environment
 
 | What | Default | Override |
@@ -84,12 +105,14 @@ bash version, so existing files keep working.
 src/main.c      argument parsing, orchestration, table output
 src/iface.c     pick the interface (default route), its IPv4/netmask/MAC
 src/arp.c       ARP sweep via libpcap (root)
-src/arpcache.c  passive fallback: kernel ARP table (/proc/net/arp or routing sysctl)
+src/arpcache.c  passive fallback: kernel ARP table (/proc/net/arp, routing sysctl, or arp -an)
 src/mdns.c      mDNS/DNS-SD queries and record parsing (PTR/SRV/TXT/A, reverse PTR)
 src/nbns.c      NetBIOS NBSTAT queries
-src/rdns.c      reverse DNS on a small thread pool
+src/rdns.c      reverse DNS as async UDP queries to the system resolver
+src/dns.c       DNS wire-format helpers shared by mdns.c, rdns.c and the tests
 src/oui.c       vendor lookup (arp-scan ieee-oui.txt, IEEE oui.txt or oui.csv)
 src/store.c     aliases and learned cache
+tests/          unit tests and libFuzzer harness
 ```
 
 The original single-file bash implementation is kept in `legacy/lan-devices.sh`.

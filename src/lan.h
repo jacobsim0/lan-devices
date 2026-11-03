@@ -38,10 +38,18 @@ double now_s(void);
 void cpy(char *dst, size_t sz, const char *src);
 void cpyn(char *dst, size_t sz, const char *src, size_t n);
 const char *mac_str(const uint8_t *mac);
-int display_width(const char *s);
+int  display_width(const char *s);
 void die(const char *fmt, ...);
 void drop_privs(void);
 bool in_subnet(const struct iface *ifc, struct in_addr ip);
+extern unsigned g_send_errors;       /* packets we failed to send, reported at exit */
+
+/* dns.c — DNS wire-format helpers shared by mdns.c, rdns.c and the tests */
+struct dname { char full[256]; char first[128]; char rest[192]; };
+int  dns_name_read(const uint8_t *p, int len, int off, struct dname *d);   /* -1 on malformed */
+bool dns_txt_get(const uint8_t *txt, int len, const char *key, char *out, size_t osz);
+int  dns_put_name(uint8_t *b, int off, const char *dotted);
+static inline unsigned dns_u16(const uint8_t *p, int o) { return ((unsigned)p[o] << 8) | p[o + 1]; }
 
 /* iface.c */
 int iface_detect(const char *want, struct iface *out, char *err, size_t errsz);
@@ -57,11 +65,13 @@ int arpcache_read(const struct iface *ifc, struct hostlist *hl);
 
 /* mdns.c */
 struct mdns;
-struct mdns *mdns_start(const struct iface *ifc, struct hostlist *hl);
+struct mdns *mdns_new(const struct iface *ifc, struct hostlist *hl);   /* parser only, no socket (tests) */
+struct mdns *mdns_start(const struct iface *ifc, struct hostlist *hl); /* socket + first queries */
 int  mdns_fd(struct mdns *m);
 void mdns_query(struct mdns *m);
 void mdns_recv(struct mdns *m);
-void mdns_finish(struct mdns *m);
+void mdns_handle(struct mdns *m, const uint8_t *pkt, int len);          /* parse one response */
+void mdns_finish(struct mdns *m);                                       /* apply names, free */
 
 /* nbns.c */
 struct nbns;
@@ -69,15 +79,21 @@ struct nbns *nbns_start(struct hostlist *hl);
 int  nbns_fd(struct nbns *n);
 void nbns_query(struct nbns *n);
 void nbns_recv(struct nbns *n);
+bool nbns_parse_reply(const uint8_t *p, int len, char *out, size_t osz);  /* workstation name */
 void nbns_finish(struct nbns *n);
 
-/* rdns.c */
-void rdns_start(struct hostlist *hl);
-void rdns_collect(struct hostlist *hl, double wait_s);
+/* rdns.c — reverse DNS as plain UDP queries to the system resolver */
+struct rdns;
+struct rdns *rdns_start(struct hostlist *hl);
+int  rdns_fd(struct rdns *r);
+void rdns_query(struct rdns *r);
+void rdns_recv(struct rdns *r);
+void rdns_finish(struct rdns *r);
 
 /* oui.c */
-int oui_load(const char *path);            /* NULL = search default locations; returns 0 if none found */
-const char *oui_lookup(const uint8_t *mac); /* NULL if unknown */
+int  oui_load(const char *path);                       /* NULL = search defaults; entries loaded */
+bool oui_parse_line(char *line, char *hex, int *hexlen, const char **name);
+const char *oui_lookup(const uint8_t *mac);            /* NULL if unknown */
 
 /* store.c — aliases + learned cache, same file format as the original bash tool */
 struct kv { char mac[18]; char name[NAME_LEN]; };

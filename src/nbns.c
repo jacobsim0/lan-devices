@@ -43,7 +43,7 @@ void nbns_query(struct nbns *n) {
         struct host *h = &n->hl->h[i];
         if (h->self || h->nbt[0]) continue;
         struct sockaddr_in to = { .sin_family = AF_INET, .sin_port = htons(137), .sin_addr = h->ip };
-        sendto(n->fd, n->q, sizeof n->q, 0, (struct sockaddr *)&to, sizeof to);
+        if (sendto(n->fd, n->q, sizeof n->q, 0, (struct sockaddr *)&to, sizeof to) < 0) g_send_errors++;
     }
 }
 
@@ -57,6 +57,30 @@ static int skip_name(const uint8_t *p, int len, int off) {
     return -1;
 }
 
+/* Parse an NBSTAT reply; returns the first unique workstation name (suffix 0x00). */
+bool nbns_parse_reply(const uint8_t *p, int len, char *out, size_t osz) {
+    if (len < 12 || !(p[2] & 0x80)) return false;
+    int off = 12;
+    int qd = (p[4] << 8) | p[5];
+    for (int i = 0; i < qd && off >= 0; i++) { off = skip_name(p, len, off); if (off >= 0) off += 4; }
+    if (off < 0) return false;
+    off = skip_name(p, len, off);
+    if (off < 0 || off + 11 > len) return false;
+    off += 10;                               /* type, class, ttl, rdlen */
+    int num = p[off++];
+    for (int i = 0; i < num && off + 18 <= len; i++, off += 18) {
+        uint8_t suffix = p[off + 15];
+        unsigned flags = (p[off + 16] << 8) | p[off + 17];
+        if (suffix != 0x00 || (flags & 0x8000)) continue;   /* workstation, unique */
+        char name[16];
+        memcpy(name, p + off, 15);
+        name[15] = 0;
+        for (int k = 14; k >= 0 && (name[k] == ' ' || name[k] == 0); k--) name[k] = 0;
+        if (name[0]) { cpy(out, osz, name); return true; }
+    }
+    return false;
+}
+
 void nbns_recv(struct nbns *n) {
     if (!n) return;
     uint8_t p[1500];
@@ -67,24 +91,7 @@ void nbns_recv(struct nbns *n) {
         if (len < 12) return;
         struct host *h = hosts_find(n->hl, from.sin_addr);
         if (!h || h->nbt[0]) continue;
-        int off = 12;
-        int qd = (p[4] << 8) | p[5];
-        for (int i = 0; i < qd && off >= 0; i++) { off = skip_name(p, len, off); if (off >= 0) off += 4; }
-        if (off < 0) continue;
-        off = skip_name(p, len, off);
-        if (off < 0 || off + 11 > len) continue;
-        off += 10;                               /* type, class, ttl, rdlen */
-        int num = p[off++];
-        for (int i = 0; i < num && off + 18 <= len; i++, off += 18) {
-            uint8_t suffix = p[off + 15];
-            unsigned flags = (p[off + 16] << 8) | p[off + 17];
-            if (suffix != 0x00 || (flags & 0x8000)) continue;   /* workstation, unique */
-            char name[16];
-            memcpy(name, p + off, 15);
-            name[15] = 0;
-            for (int k = 14; k >= 0 && (name[k] == ' ' || name[k] == 0); k--) name[k] = 0;
-            if (name[0]) { cpy(h->nbt, sizeof h->nbt, name); break; }
-        }
+        nbns_parse_reply(p, (int)len, h->nbt, sizeof h->nbt);
     }
 }
 

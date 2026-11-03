@@ -38,31 +38,46 @@ static void add(const char *hex, int hl, const char *name) {
 
 static int cmp(const void *a, const void *b) { return strcmp(((const struct ent *)a)->pfx, ((const struct ent *)b)->pfx); }
 
-static void parse_line(char *line) {
-    char hex[13];
+/* Parse one line of any supported OUI file into (hex prefix, its length, name).
+ * The line may be modified in place. Returns false for comments, addresses, etc. */
+bool oui_parse_line(char *line, char *hex, int *hexlen, const char **name) {
     int hl = 0;
+    *hexlen = 0; *name = NULL;
     if (!strncmp(line, "MA-", 3)) {                 /* CSV: Registry,Assignment,Organization Name,Address */
         char *p = strchr(line, ',');
-        if (!p) return;
+        if (!p) return false;
         p++;
         while (isxdigit((unsigned char)*p) && hl < 12) hex[hl++] = *p++;
-        if (*p != ',') return;
+        if (*p != ',') return false;
         p++;
-        char *name = p, *end;
-        if (*p == '"') { name = p + 1; end = strchr(name, '"'); }
+        char *nm = p, *end;
+        if (*p == '"') { nm = p + 1; end = strchr(nm, '"'); }
         else end = strchr(p, ',');
         if (end) *end = 0;
-        add(hex, hl, name);
-        return;
+        *hexlen = hl; *name = nm;
+        return hl >= 6 && hl <= 9 && *nm;
     }
     char *p = line;
     while (*p == ' ' || *p == '\t') p++;
-    if (*p == '#' || !isxdigit((unsigned char)*p)) return;
+    if (*p == '#' || !isxdigit((unsigned char)*p)) return false;
     while ((isxdigit((unsigned char)*p) || *p == '-') && hl < 12) { if (*p != '-') hex[hl++] = *p; p++; }
-    if (*p == '\t') { add(hex, hl, p + 1); return; }
-    while (*p == ' ') p++;
-    if (!strncmp(p, "(hex)", 5)) add(hex, hl, p + 5);
-    else if (!strncmp(p, "(base 16)", 9)) add(hex, hl, p + 9);
+    if (*p == '\t') { *name = p + 1; }
+    else {
+        while (*p == ' ') p++;
+        if (!strncmp(p, "(hex)", 5)) *name = p + 5;
+        else if (!strncmp(p, "(base 16)", 9)) *name = p + 9;
+        else return false;
+    }
+    while (**name == ' ' || **name == '\t') (*name)++;
+    *hexlen = hl;
+    return hl >= 6 && hl <= 9 && **name && **name != '\n';
+}
+
+static void parse_line(char *line) {
+    char hex[13];
+    int hl;
+    const char *name;
+    if (oui_parse_line(line, hex, &hl, &name)) add(hex, hl, name);
 }
 
 int oui_load(const char *path) {

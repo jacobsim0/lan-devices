@@ -1,74 +1,107 @@
-/* Reverse DNS via getnameinfo(), on a small thread pool so slow resolvers
- * don't serialise. Results are copied into hosts only in rdns_collect(). */
+/* Reverse DNS without threads or getnameinfo(): one UDP socket, a PTR query
+ * per host to the nameservers in /etc/resolv.conf, answers parsed on the main
+ * poll loop. A slow resolver therefore costs nothing beyond the listen window. */
 #include "lan.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <pthread.h>
-#include <time.h>
-#include <netdb.h>
+#include <unistd.h>
+#include <fcntl.h>
 #include <sys/socket.h>
+#include <arpa/inet.h>
 
-struct job { struct in_addr ip; char name[NAME_LEN]; bool done; };
+struct rdns {
+    int fd;
+    struct hostlist *hl;
+    struct sockaddr_in ns[3];
+    int nns, round;
+    uint16_t base;
+};
 
-static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t cv = PTHREAD_COND_INITIALIZER;
-static struct job *jobs;
-static int njobs, next_job, pending;
+static int read_resolv(struct rdns *r) {
+    FILE *f = fopen("/etc/resolv.conf", "r");
+    if (!f) return 0;
+    char line[256], ip[64];
+    while (fgets(line, sizeof line, f) && r->nns < 3) {
+        if (sscanf(line, "nameserver %63s", ip) != 1) continue;
+        struct sockaddr_in *s = &r->ns[r->nns];
+        memset(s, 0, sizeof *s);
+        s->sin_family = AF_INET;
+        s->sin_port = htons(53);
+        if (inet_pton(AF_INET, ip, &s->sin_addr) == 1) r->nns++;   /* IPv4 resolvers only */
+    }
+    fclose(f);
+    return r->nns;
+}
 
-static void *worker(void *arg) {
-    (void)arg;
+struct rdns *rdns_start(struct hostlist *hl) {
+    struct rdns *r = calloc(1, sizeof *r);
+    r->hl = hl;
+    r->fd = -1;
+    r->base = (uint16_t)(getpid() * 31u);
+    if (!read_resolv(r)) return r;          /* no resolver: every call is a no-op */
+    r->fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (r->fd < 0) return r;
+    fcntl(r->fd, F_SETFL, O_NONBLOCK);
+    rdns_query(r);
+    return r;
+}
+
+int rdns_fd(struct rdns *r) { return r ? r->fd : -1; }
+
+/* Send a PTR query for every host still unnamed; each round uses the next nameserver. */
+void rdns_query(struct rdns *r) {
+    if (!r || r->fd < 0) return;
+    const struct sockaddr_in *ns = &r->ns[r->round++ % r->nns];
+    for (int i = 0; i < r->hl->n && i < 65000; i++) {
+        struct host *h = &r->hl->h[i];
+        if (h->rdns[0]) continue;
+        uint8_t b[64];
+        uint16_t id = (uint16_t)(r->base + i);
+        b[0] = id >> 8; b[1] = id & 0xff;
+        b[2] = 0x01; b[3] = 0;                 /* recursion desired */
+        b[4] = 0; b[5] = 1; memset(b + 6, 0, 6);
+        const uint8_t *q = (const uint8_t *)&h->ip.s_addr;
+        char name[40];
+        snprintf(name, sizeof name, "%u.%u.%u.%u.in-addr.arpa", q[3], q[2], q[1], q[0]);
+        int off = dns_put_name(b, 12, name);
+        b[off++] = 0; b[off++] = 12;           /* PTR */
+        b[off++] = 0; b[off++] = 1;            /* IN */
+        if (sendto(r->fd, b, off, 0, (const struct sockaddr *)ns, sizeof *ns) < 0) g_send_errors++;
+    }
+}
+
+void rdns_recv(struct rdns *r) {
+    if (!r || r->fd < 0) return;
+    uint8_t p[2048];
     for (;;) {
-        pthread_mutex_lock(&mu);
-        int i = next_job < njobs ? next_job++ : -1;
-        pthread_mutex_unlock(&mu);
-        if (i < 0) return NULL;
-        struct sockaddr_in sa;
-        memset(&sa, 0, sizeof sa);
-        sa.sin_family = AF_INET;
-        sa.sin_addr = jobs[i].ip;
-#if defined(__APPLE__) || defined(__FreeBSD__)
-        sa.sin_len = sizeof sa;
-#endif
-        char buf[NI_MAXHOST];
-        int rc = getnameinfo((struct sockaddr *)&sa, sizeof sa, buf, sizeof buf, NULL, 0, NI_NAMEREQD);
-        pthread_mutex_lock(&mu);
-        if (rc == 0) cpy(jobs[i].name, sizeof jobs[i].name, buf);
-        jobs[i].done = true;
-        pending--;
-        pthread_cond_broadcast(&cv);
-        pthread_mutex_unlock(&mu);
+        ssize_t len = recv(r->fd, p, sizeof p, 0);
+        if (len < 12) return;
+        if (!(p[2] & 0x80) || (p[3] & 0x0f) != 0) continue;     /* not a response, or an error */
+        int i = (uint16_t)(dns_u16(p, 0) - r->base);
+        if (i < 0 || i >= r->hl->n) continue;
+        struct host *h = &r->hl->h[i];
+        if (h->rdns[0]) continue;
+        int qd = dns_u16(p, 4), an = dns_u16(p, 6), off = 12;
+        struct dname n, v;
+        for (int k = 0; k < qd; k++) { off = dns_name_read(p, (int)len, off, &n); if (off < 0) break; off += 4; }
+        if (off < 0) continue;
+        for (int k = 0; k < an; k++) {
+            off = dns_name_read(p, (int)len, off, &n);
+            if (off < 0 || off + 10 > len) break;
+            int type = dns_u16(p, off), rdlen = dns_u16(p, off + 8), rd = off + 10;
+            off = rd + rdlen;
+            if (off > len) break;
+            if (type == 12 && dns_name_read(p, (int)len, rd, &v) >= 0 && v.full[0]) {
+                cpy(h->rdns, sizeof h->rdns, v.full);
+                break;
+            }
+        }
     }
 }
 
-void rdns_start(struct hostlist *hl) {
-    njobs = hl->n;
-    jobs = calloc(njobs ? njobs : 1, sizeof *jobs);
-    for (int i = 0; i < njobs; i++) jobs[i].ip = hl->h[i].ip;
-    pending = njobs;
-    int nthreads = njobs < 32 ? njobs : 32;
-    pthread_attr_t at;
-    pthread_attr_init(&at);
-    pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
-    for (int i = 0; i < nthreads; i++) {
-        pthread_t t;
-        pthread_create(&t, &at, worker, NULL);
-    }
-    pthread_attr_destroy(&at);
-}
-
-void rdns_collect(struct hostlist *hl, double wait_s) {
-    struct timespec dl;
-    clock_gettime(CLOCK_REALTIME, &dl);
-    dl.tv_sec += (time_t)wait_s;
-    dl.tv_nsec += (long)((wait_s - (time_t)wait_s) * 1e9);
-    if (dl.tv_nsec >= 1000000000L) { dl.tv_sec++; dl.tv_nsec -= 1000000000L; }
-    pthread_mutex_lock(&mu);
-    while (pending > 0 && pthread_cond_timedwait(&cv, &mu, &dl) == 0) {}
-    for (int i = 0; i < njobs; i++) {
-        if (!jobs[i].done || !jobs[i].name[0]) continue;
-        struct host *h = hosts_find(hl, jobs[i].ip);
-        if (h) cpy(h->rdns, sizeof h->rdns, jobs[i].name);
-    }
-    pthread_mutex_unlock(&mu);
-    /* jobs[] is intentionally not freed: stragglers may still write to it. */
+void rdns_finish(struct rdns *r) {
+    if (!r) return;
+    if (r->fd >= 0) close(r->fd);
+    free(r);
 }

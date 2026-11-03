@@ -9,6 +9,8 @@
 #include <wchar.h>
 #include <locale.h>
 
+unsigned g_send_errors;
+
 double now_s(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);

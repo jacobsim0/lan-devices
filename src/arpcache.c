@@ -31,6 +31,7 @@ int arpcache_read(const struct iface *ifc, struct hostlist *hl) {
     return n;
 }
 #else
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/sysctl.h>
 #include <net/if.h>
@@ -40,10 +41,33 @@ int arpcache_read(const struct iface *ifc, struct hostlist *hl) {
 
 #define RT_ROUNDUP(a) ((a) > 0 ? (1 + (((a) - 1) | (sizeof(uint32_t) - 1))) : sizeof(uint32_t))
 
+#include <unistd.h>
+#include <sys/wait.h>
+
+/* Run a program with no shell and return its stdout as a FILE*. */
+static FILE *run_capture(const char *path, char *const argv[], pid_t *pid) {
+    int pfd[2];
+    if (pipe(pfd) < 0) return NULL;
+    *pid = fork();
+    if (*pid < 0) { close(pfd[0]); close(pfd[1]); return NULL; }
+    if (*pid == 0) {
+        dup2(pfd[1], STDOUT_FILENO);
+        close(pfd[0]); close(pfd[1]);
+        int devnull = open("/dev/null", O_WRONLY);
+        if (devnull >= 0) { dup2(devnull, STDERR_FILENO); close(devnull); }
+        execv(path, argv);
+        _exit(127);
+    }
+    close(pfd[1]);
+    return fdopen(pfd[0], "r");
+}
+
 /* Fallback when the routing sysctl yields nothing (seen under some sandboxes):
- * parse `arp -an`, whose format has been stable for decades. */
+ * parse `arp -an`, whose output format has been stable for decades. */
 static int arpcache_cmd(const struct iface *ifc, struct hostlist *hl) {
-    FILE *f = popen("/usr/sbin/arp -an 2>/dev/null", "r");
+    char *const argv[] = { "arp", "-an", NULL };
+    pid_t pid;
+    FILE *f = run_capture("/usr/sbin/arp", argv, &pid);
     if (!f) return -1;
     char line[256], ips[64], hw[64], dev[64];
     int n = 0;
@@ -60,7 +84,8 @@ static int arpcache_cmd(const struct iface *ifc, struct hostlist *hl) {
         hosts_add(hl, ip, mac);
         n++;
     }
-    pclose(f);
+    fclose(f);
+    waitpid(pid, NULL, 0);
     return n;
 }
 

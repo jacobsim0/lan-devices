@@ -5,14 +5,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y libpcap-dev
-      - run: make CFLAGS="-O2 -Wall -Wextra -Werror"
-      - run: ./lan-devices -h
-      - run: ./lan-devices --passive --no-vendor
+      - run: sudo apt-get update && sudo apt-get install -y libpcap-dev clang
+      - name: Build (warnings are errors)
+        run: make CFLAGS="-O2 -Wall -Wextra -Werror"
+      - name: Unit tests
+        run: make check
+      - name: Unit tests under ASan + UBSan
+        run: make check-asan
+      - name: Fuzz every parser for 30 s
+        run: make CC=clang FUZZ_TIME=30 fuzz
+      - name: Smoke test
+        run: ./lan-devices -h && ./lan-devices --passive --no-vendor
   macos:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - run: make CFLAGS="-O2 -Wall -Wextra -Werror"
-      - run: ./lan-devices -h
-      - run: ./lan-devices --passive --no-vendor
+      - name: Build (warnings are errors)
+        run: make CFLAGS="-O2 -Wall -Wextra -Werror"
+      - name: Unit tests
+        run: make check
+      - name: Smoke test
+        run: ./lan-devices -h && ./lan-devices --passive --no-vendor
