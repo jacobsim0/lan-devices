@@ -1,5 +1,7 @@
 # lan-devices
 
+[![build](https://github.com/jacobsim0/lan-devices/actions/workflows/build.yml/badge.svg)](https://github.com/jacobsim0/lan-devices/actions/workflows/build.yml)
+
 **Who's on my network, with the best name we can find.** A small C tool for
 Linux and macOS that ARP-scans your LAN and names every device using six name
 sources in priority order:
