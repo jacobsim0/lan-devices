@@ -25,7 +25,7 @@ uint16_t icmp6_checksum(const struct in6_addr *src, const struct in6_addr *dst, 
 /* Ethernet + IPv6 + ICMPv6 Echo Request to ff02::1. Returns frame length or -1. */
 int nd6_build_echo(const struct iface *ifc, uint8_t *f, size_t sz, uint16_t seq) {
     if (!ifc->have_ll6 || sz < 70) return -1;
-    static const uint8_t data[8] = "lan-dev!";
+    static const uint8_t data[8] = { 'l', 'a', 'n', '-', 'd', 'e', 'v', '!' };
     struct in6_addr dst = { { { 0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 } } };
     memset(f, 0, 70);
     f[0] = 0x33; f[1] = 0x33; f[5] = 0x01;         /* 33:33:00:00:00:01 = ff02::1 */
