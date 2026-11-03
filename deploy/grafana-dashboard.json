@@ -1,0 +1,72 @@
+{
+  "title": "LAN devices",
+  "uid": "lan-devices",
+  "tags": ["lan", "network"],
+  "timezone": "browser",
+  "refresh": "1m",
+  "time": { "from": "now-24h", "to": "now" },
+  "schemaVersion": 39,
+  "panels": [
+    {
+      "type": "stat", "title": "Online now", "id": 1,
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "targets": [{ "expr": "lan_devices_online", "refId": "A" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "none", "graphMode": "none" }
+    },
+    {
+      "type": "stat", "title": "Known devices (ever seen)", "id": 2,
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "targets": [{ "expr": "lan_devices_known_total", "refId": "A" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "none", "graphMode": "none" }
+    },
+    {
+      "type": "stat", "title": "Unknown devices online", "id": 3,
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "targets": [{ "expr": "count(lan_device_online{known=\"false\"} == 1) or vector(0)", "refId": "A" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 1 }] } } }
+    },
+    {
+      "type": "stat", "title": "Last scan", "id": 4,
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "targets": [{ "expr": "lan_scan_duration_seconds", "refId": "A" }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "none", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 1 } }
+    },
+    {
+      "type": "timeseries", "title": "Devices online", "id": 5,
+      "gridPos": { "x": 0, "y": 4, "w": 24, "h": 8 },
+      "targets": [{ "expr": "lan_devices_online", "legendFormat": "online", "refId": "A" }],
+      "options": { "legend": { "showLegend": false }, "tooltip": { "mode": "single" } },
+      "fieldConfig": { "defaults": { "custom": { "lineWidth": 2, "fillOpacity": 8, "showPoints": "never" }, "min": 0, "decimals": 0 } }
+    },
+    {
+      "type": "table", "title": "Devices", "id": 6,
+      "gridPos": { "x": 0, "y": 12, "w": 24, "h": 14 },
+      "targets": [
+        { "expr": "lan_device_online", "format": "table", "instant": true, "refId": "A" },
+        { "expr": "lan_device_last_seen_seconds * 1000", "format": "table", "instant": true, "refId": "B" }
+      ],
+      "transformations": [
+        { "id": "joinByField", "options": { "byField": "mac", "mode": "outer" } },
+        { "id": "organize", "options": {
+            "excludeByName": { "Time 1": true, "Time 2": true, "__name__ 1": true, "__name__ 2": true, "job 1": true, "job 2": true,
+                               "instance 1": true, "instance 2": true, "namespace 1": true, "namespace 2": true,
+                               "service 1": true, "service 2": true, "pod 1": true, "pod 2": true, "container 1": true, "container 2": true,
+                               "endpoint 1": true, "endpoint 2": true, "name 2": true },
+            "renameByName": { "Value #A": "online", "Value #B": "last seen", "name 1": "name" },
+            "indexByName": { "online": 0, "name": 1, "ip": 2, "mac": 3, "vendor": 4, "known": 5, "last seen": 6 } } },
+        { "id": "sortBy", "options": { "sort": [{ "field": "online", "desc": true }] } }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "last seen" }, "properties": [{ "id": "unit", "value": "dateTimeFromNow" }] },
+          { "matcher": { "id": "byName", "options": "online" }, "properties": [
+              { "id": "custom.cellOptions", "value": { "type": "color-text" } },
+              { "id": "mappings", "value": [{ "type": "value", "options": { "0": { "text": "offline", "color": "text" }, "1": { "text": "online", "color": "green" } } }] } ] }
+        ]
+      }
+    }
+  ]
+}

@@ -41,8 +41,8 @@ void nbns_query(struct nbns *n) {
     if (!n) return;
     for (int i = 0; i < n->hl->n; i++) {
         struct host *h = &n->hl->h[i];
-        if (h->self || h->nbt[0]) continue;
-        struct sockaddr_in to = { .sin_family = AF_INET, .sin_port = htons(137), .sin_addr = h->ip };
+        if (h->self || h->nbt[0] || !h->ip4.s_addr) continue;
+        struct sockaddr_in to = { .sin_family = AF_INET, .sin_port = htons(137), .sin_addr = h->ip4 };
         if (sendto(n->fd, n->q, sizeof n->q, 0, (struct sockaddr *)&to, sizeof to) < 0) g_send_errors++;
     }
 }
@@ -89,7 +89,7 @@ void nbns_recv(struct nbns *n) {
     for (;;) {
         ssize_t len = recvfrom(n->fd, p, sizeof p, 0, (struct sockaddr *)&from, &fl);
         if (len < 12) return;
-        struct host *h = hosts_find(n->hl, from.sin_addr);
+        struct host *h = hosts_find4(n->hl, from.sin_addr);
         if (!h || h->nbt[0]) continue;
         nbns_parse_reply(p, (int)len, h->nbt, sizeof h->nbt);
     }

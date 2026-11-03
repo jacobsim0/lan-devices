@@ -83,6 +83,24 @@ int iface_detect(const char *want, struct iface *out, char *err, size_t errsz) {
         have_mac = true;
         break;
     }
+    /* IPv6: our link-local address (echo source) and on-link prefixes (to tell neighbours from forwarded traffic) */
+    for (ifa = ifa0; ifa; ifa = ifa->ifa_next) {
+        if (!ifa->ifa_addr || ifa->ifa_addr->sa_family != AF_INET6 || strcmp(ifa->ifa_name, out->name)) continue;
+        struct sockaddr_in6 *a = (struct sockaddr_in6 *)ifa->ifa_addr;
+        struct sockaddr_in6 *m = (struct sockaddr_in6 *)ifa->ifa_netmask;
+        if (IN6_IS_ADDR_LINKLOCAL(&a->sin6_addr)) {
+            if (!out->have_ll6) { out->ll6 = a->sin6_addr; out->have_ll6 = true; }
+            continue;
+        }
+        if (IN6_IS_ADDR_LOOPBACK(&a->sin6_addr) || out->npfx6 >= 4) continue;
+        int plen = 0;
+        if (m) for (int i = 0; i < 16; i++) { uint8_t b = m->sin6_addr.s6_addr[i]; while (b & 0x80) { plen++; b <<= 1; } if (b) break; }
+        if (!plen) plen = 64;
+        out->pfx6[out->npfx6].addr = a->sin6_addr;
+        out->pfx6[out->npfx6].plen = plen;
+        out->npfx6++;
+    }
+    out->index = if_nametoindex(out->name);
     freeifaddrs(ifa0);
     if (!have_mac) { snprintf(err, errsz, "%s has no Ethernet address", out->name); return -1; }
     return 0;

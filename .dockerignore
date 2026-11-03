@@ -1,0 +1,7 @@
+lan-devices
+.git
+*.dSYM
+tests/test_parsers
+tests/test_parsers_asan
+tests/fuzz_parsers
+tests/corpus

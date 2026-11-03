@@ -13,6 +13,7 @@ static struct ent *E;
 static int N, C;
 
 static const char *DEFAULT_PATHS[] = {
+    "/usr/share/lan-devices/oui.csv",
     "/usr/share/arp-scan/ieee-oui.txt",
     "/opt/homebrew/share/arp-scan/ieee-oui.txt",
     "/usr/local/share/arp-scan/ieee-oui.txt",

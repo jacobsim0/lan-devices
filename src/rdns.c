@@ -56,14 +56,20 @@ void rdns_query(struct rdns *r) {
     for (int i = 0; i < r->hl->n && i < 65000; i++) {
         struct host *h = &r->hl->h[i];
         if (h->rdns[0]) continue;
-        uint8_t b[64];
+        char name[96];
+        if (h->ip4.s_addr) {
+            const uint8_t *q = (const uint8_t *)&h->ip4.s_addr;
+            snprintf(name, sizeof name, "%u.%u.%u.%u.in-addr.arpa", q[3], q[2], q[1], q[0]);
+        } else {
+            const struct in6_addr *a = host_best6(h);
+            if (!a || IN6_IS_ADDR_LINKLOCAL(a)) continue;     /* link-local is never in DNS */
+            ip6_arpa(a, name, sizeof name);
+        }
+        uint8_t b[128];
         uint16_t id = (uint16_t)(r->base + i);
         b[0] = id >> 8; b[1] = id & 0xff;
         b[2] = 0x01; b[3] = 0;                 /* recursion desired */
         b[4] = 0; b[5] = 1; memset(b + 6, 0, 6);
-        const uint8_t *q = (const uint8_t *)&h->ip.s_addr;
-        char name[40];
-        snprintf(name, sizeof name, "%u.%u.%u.%u.in-addr.arpa", q[3], q[2], q[1], q[0]);
         int off = dns_put_name(b, 12, name);
         b[off++] = 0; b[off++] = 12;           /* PTR */
         b[off++] = 0; b[off++] = 1;            /* IN */

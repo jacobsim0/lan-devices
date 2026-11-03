@@ -1,0 +1,113 @@
+# lan-devices in --watch mode: sweeps the LAN every minute (ARP + ICMPv6 + mDNS +
+# NetBIOS + DNS), remembers every device, and exposes Prometheus metrics.
+# Source and image: https://github.com/jacobsim0/lan-devices
+# Namespace, storage class and image tag are the things to adjust.
+#
+# hostNetwork is required: the sweep must sit on the LAN's layer 2, not the CNI
+# bridge. NET_RAW is the only capability it needs (libpcap); everything else is
+# dropped. State (learned names, first/last seen) lives on a small PVC.
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: lan-devices-aliases, namespace: lab }
+data:
+  # Your labels, keyed by MAC. A device with an alias is "known"; the alert below
+  # fires for devices without one. Tab-separated: mac<TAB>name
+  aliases: |
+    aa:bb:cc:dd:ee:ff	Living room TV
+    11:22:33:44:55:66	Router
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: lan-devices-state, namespace: lab }
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path   # or your default class
+  resources: { requests: { storage: 64Mi } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: lan-devices, namespace: lab }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }        # hostNetwork port + RWO volume: never two at once
+  selector: { matchLabels: { app: lan-devices } }
+  template:
+    metadata: { labels: { app: lan-devices } }
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+      - name: lan-devices
+        image: ghcr.io/jacobsim0/lan-devices:latest   # pin to a commit tag once the first image is published
+        imagePullPolicy: Always
+        args: ["--watch", "--interval", "60", "--listen", ":9341"]
+        env:
+        - { name: LAN_DEVICES_DIR, value: /data }
+        - { name: LAN_DEVICES_ALIASES, value: /config/aliases }
+        ports: [{ name: metrics, containerPort: 9341, hostPort: 9341 }]
+        securityContext:
+          capabilities: { drop: [ALL], add: [NET_RAW] }
+          readOnlyRootFilesystem: true
+        readinessProbe: { httpGet: { path: /healthz, port: metrics }, periodSeconds: 15 }
+        livenessProbe:  { httpGet: { path: /healthz, port: metrics }, periodSeconds: 30, failureThreshold: 3 }
+        resources:
+          requests: { cpu: 10m, memory: 32Mi }
+          limits:   { cpu: 200m, memory: 128Mi }
+        volumeMounts:
+        - { name: state, mountPath: /data }
+        - { name: aliases, mountPath: /config, readOnly: true }
+      volumes:
+      - name: state
+        persistentVolumeClaim: { claimName: lan-devices-state }
+      - name: aliases
+        configMap: { name: lan-devices-aliases }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lan-devices
+  namespace: lab
+  labels: { app: lan-devices }
+spec:
+  selector: { app: lan-devices }
+  ports: [{ name: metrics, port: 9341, targetPort: metrics }]
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata: { name: lan-devices, namespace: lab }
+spec:
+  selector: { matchLabels: { app: lan-devices } }
+  endpoints:
+  - port: metrics
+    interval: 60s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: lan-devices-alerts
+  namespace: monitoring   # where your Prometheus picks up rules
+spec:
+  groups:
+  - name: lan-devices
+    rules:
+    - alert: UnknownDeviceJoined
+      # Online, has no alias, and was first seen in the last 10 minutes.
+      expr: lan_device_online{known="false"} == 1 and (time() - lan_device_first_seen_seconds) < 600
+      for: 1m
+      labels: { severity: warning }
+      annotations:
+        summary: "Unknown device {{ $labels.mac }} joined the LAN"
+        description: "{{ $labels.ip }} ({{ $labels.vendor }}), name \"{{ $labels.name }}\". Label it: lan-devices --add {{ $labels.mac }} \"name\" or add it to the aliases ConfigMap."
+    - alert: LanDevicesScannerStale
+      expr: time() - lan_scan_last_timestamp_seconds > 300
+      for: 2m
+      labels: { severity: warning }
+      annotations:
+        summary: "lan-devices has not completed a scan in 5 minutes"
+        description: "The watcher is stuck or down; device inventory and the unknown-device alert are blind."
+    - alert: LanDevicesScannerDown
+      expr: absent(up{job="lan-devices"}) or up{job="lan-devices"} == 0
+      for: 5m
+      labels: { severity: warning }
+      annotations:
+        summary: "lan-devices metrics endpoint is not being scraped"

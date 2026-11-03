@@ -32,6 +32,14 @@ const char *aliases_path(void) {
     return apath;
 }
 
+const char *seen_path(void) {
+    static char spath[600];
+    const char *e = getenv("LAN_DEVICES_SEEN");
+    if (e && *e) return e;
+    snprintf(spath, sizeof spath, "%s/seen", store_dir());
+    return spath;
+}
+
 const char *cache_path(void) {
     const char *e = getenv("LAN_DEVICES_CACHE");
     if (e && *e) return e;
@@ -44,7 +52,7 @@ static void chown_to_caller(const char *p) {
     if (geteuid() == 0 && u && g) { if (chown(p, (uid_t)atoi(u), (gid_t)atoi(g)) != 0) { /* best effort */ } }
 }
 
-static void ensure_parent(const char *path) {
+void store_mkdir_for(const char *path) {
     char p[600];
     cpy(p, sizeof p, path);
     char *slash = strrchr(p, '/');
@@ -109,7 +117,7 @@ void kv_put_front(struct kvlist *l, const char *mac, const char *name) {
 }
 
 int kv_save(const struct kvlist *l, const char *path) {
-    ensure_parent(path);
+    store_mkdir_for(path);
     char tmp[700];
     snprintf(tmp, sizeof tmp, "%s.tmp", path);
     FILE *f = fopen(tmp, "w");

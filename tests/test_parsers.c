@@ -30,6 +30,9 @@ static void rr_end(struct pb *p, int rd) { int len = p->n - rd; p->b[rd - 2] = l
 static void rr_a(struct pb *p, const char *name, const char *ip) {
     int rd = rr_begin(p, name, 1); struct in_addr a; inet_pton(AF_INET, ip, &a); praw(p, &a, 4); rr_end(p, rd);
 }
+static void rr_aaaa(struct pb *p, const char *name, const char *ip) {
+    int rd = rr_begin(p, name, 28); struct in6_addr a; inet_pton(AF_INET6, ip, &a); praw(p, &a, 16); rr_end(p, rd);
+}
 static void rr_ptr(struct pb *p, const char *name, const char *target) {
     int rd = rr_begin(p, name, 12); pname(p, target); rr_end(p, rd);
 }
@@ -117,14 +120,14 @@ static struct iface IFC;
 static struct hostlist HL;
 static struct host *add_host(const char *ip) {
     struct in_addr a; inet_pton(AF_INET, ip, &a);
-    uint8_t mac[6] = { 0, 1, 2, 3, 4, (uint8_t)a.s_addr };
-    return hosts_add(&HL, a, mac);
+    uint8_t mac[6] = { 0, 1, 2, 3, 4, (uint8_t)(a.s_addr >> 24) };
+    return hosts_add4(&HL, mac, a);
 }
 static void reset_hosts(void) {
     free(HL.h); memset(&HL, 0, sizeof HL);
     add_host("192.168.0.1"); add_host("192.168.0.153"); add_host("192.168.0.238"); add_host("192.168.0.182");
 }
-static struct host *host(const char *ip) { struct in_addr a; inet_pton(AF_INET, ip, &a); return hosts_find(&HL, a); }
+static struct host *host(const char *ip) { struct in_addr a; inet_pton(AF_INET, ip, &a); return hosts_find4(&HL, a); }
 
 static void build_mdns_response(struct pb *p) {
     dns_hdr(p, 0x8400, 0, 0, 0, 0);
@@ -176,6 +179,22 @@ static void test_mdns(void) {
     CHECK_STR(host("192.168.0.1")->mdns, "opnsense");
     CHECK(host("192.168.0.1")->svc[0] == 0);
 
+    /* IPv6-only device: AAAA target and an ip6.arpa reverse answer */
+    reset_hosts();
+    uint8_t m6[6] = { 0xde, 0xad, 0, 0, 0, 1 };
+    struct in6_addr a6; inet_pton(AF_INET6, "fe80::dead:1", &a6);
+    hosts_add6(&HL, m6, &a6);
+    dns_hdr(&p, 0x8400, 0, 4, 0, 0);
+    rr_ptr(&p, "_airplay._tcp.local", "Attic TV._airplay._tcp.local");
+    rr_srv(&p, "Attic TV._airplay._tcp.local", "attic.local");
+    rr_aaaa(&p, "attic.local", "fe80::dead:1");
+    char rev6[96]; ip6_arpa(&a6, rev6, sizeof rev6);
+    CHECK_STR(rev6, "1.0.0.0.d.a.e.d.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.e.f.ip6.arpa");
+    rr_ptr(&p, rev6, "attic-rev.local");
+    m = mdns_new(&IFC, &HL); mdns_handle(m, p.b, p.n); mdns_finish(m);
+    CHECK_STR(hosts_find6(&HL, &a6)->svc, "Attic TV");
+    CHECK_STR(hosts_find6(&HL, &a6)->mdns, "attic-rev");
+
     /* RAOP alone (no higher-priority name): MAC@ prefix is stripped */
     reset_hosts();
     dns_hdr(&p, 0x8400, 0, 3, 0, 0);
@@ -216,6 +235,135 @@ static void test_mdns(void) {
         m = mdns_new(&IFC, &HL); mdns_handle(m, q.b, q.n); mdns_finish(m);
     }
     checks++;   /* survived */
+}
+
+/* ---- IPv6: host model, prefixes, reverse names ---- */
+static void test_ip6_model(void) {
+    struct hostlist hl = { 0 };
+    uint8_t m1[6] = { 0xaa, 1, 1, 1, 1, 1 }, m2[6] = { 0xaa, 2, 2, 2, 2, 2 };
+    struct in_addr v4; inet_pton(AF_INET, "192.168.0.50", &v4);
+    struct in6_addr ll, gl, ula;
+    inet_pton(AF_INET6, "fe80::1", &ll);
+    inet_pton(AF_INET6, "2001:db8:1::50", &gl);
+    inet_pton(AF_INET6, "fd00::50", &ula);
+    /* same MAC seen via ARP, then via IPv6: one row */
+    hosts_add4(&hl, m1, v4);
+    hosts_add6(&hl, m1, &ll);
+    hosts_add6(&hl, m1, &ll);                 /* duplicate ignored */
+    hosts_add6(&hl, m1, &ula);
+    hosts_add6(&hl, m1, &gl);
+    CHECK(hl.n == 1 && hl.h[0].n6 == 3);
+    CHECK(hosts_find6(&hl, &gl) == &hl.h[0]);
+    CHECK(hosts_find4(&hl, v4) == &hl.h[0]);
+    CHECK(!memcmp(host_best6(&hl.h[0]), &gl, 16));    /* global beats ULA beats link-local */
+    /* IPv6-only device */
+    hosts_add6(&hl, m2, &ll);
+    CHECK(hl.n == 2 && hl.h[1].ip4.s_addr == 0 && hl.h[1].n6 == 1);
+    CHECK(host_best6(&hl.h[0]) != NULL && host_best6(&hl.h[1]) != NULL);
+    /* a second IPv4 for the same MAC does not replace the first */
+    struct in_addr v4b; inet_pton(AF_INET, "192.168.0.51", &v4b);
+    hosts_add4(&hl, m1, v4b);
+    CHECK(hl.n == 2 && hl.h[0].ip4.s_addr == v4.s_addr);
+    free(hl.h);
+
+    /* on_link6: link-local always; otherwise only inside a configured prefix */
+    struct iface ifc = { 0 };
+    inet_pton(AF_INET6, "2601:207:400:fd2::", &ifc.pfx6[0].addr); ifc.pfx6[0].plen = 64;
+    inet_pton(AF_INET6, "fd12:3456::", &ifc.pfx6[1].addr); ifc.pfx6[1].plen = 60;
+    ifc.npfx6 = 2;
+    struct in6_addr t;
+    inet_pton(AF_INET6, "fe80::abcd", &t);            CHECK(on_link6(&ifc, &t));
+    inet_pton(AF_INET6, "2601:207:400:fd2:1::9", &t); CHECK(on_link6(&ifc, &t));
+    inet_pton(AF_INET6, "2601:207:400:fd3::9", &t);   CHECK(!on_link6(&ifc, &t));
+    inet_pton(AF_INET6, "fd12:3456:0:f::1", &t);      CHECK(on_link6(&ifc, &t));   /* inside /60 */
+    inet_pton(AF_INET6, "fd12:3456:0:10::1", &t);     CHECK(!on_link6(&ifc, &t));  /* outside /60 */
+    inet_pton(AF_INET6, "2a00::1", &t);               CHECK(!on_link6(&ifc, &t));
+
+    char name[96];
+    inet_pton(AF_INET6, "2001:db8::1", &t);
+    ip6_arpa(&t, name, sizeof name);
+    CHECK_STR(name, "1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa");
+}
+
+/* ---- ICMPv6 echo frame ---- */
+static void test_nd6(void) {
+    /* RFC-style check: a correct packet's checksum field verifies to zero */
+    struct iface ifc = IFC;
+    inet_pton(AF_INET6, "fe80::1", &ifc.ll6); ifc.have_ll6 = true;
+    memcpy(ifc.mac, (uint8_t[]){ 0xf6, 0x75, 0x90, 0xb8, 0xf6, 0x91 }, 6);
+    uint8_t f[70];
+    CHECK(nd6_build_echo(&ifc, f, sizeof f, 7) == 70);
+    CHECK(f[0] == 0x33 && f[1] == 0x33 && f[5] == 0x01);         /* all-nodes multicast MAC */
+    CHECK(f[12] == 0x86 && f[13] == 0xdd && f[14 + 6] == 58);
+    CHECK(f[54] == 128 && f[61] == 7);                            /* echo request, seq */
+    struct in6_addr dst; memcpy(&dst, f + 14 + 24, 16);
+    CHECK(icmp6_checksum(&ifc.ll6, &dst, f + 54, 16) == 0);       /* includes the checksum field: must be 0 */
+    ifc.have_ll6 = false;
+    CHECK(nd6_build_echo(&ifc, f, sizeof f, 1) == -1);
+    CHECK(nd6_build_echo(&IFC, f, 10, 1) == -1);
+}
+
+/* ---- frame classification (cap_frame) ---- */
+static int eth(uint8_t *f, const uint8_t *src, unsigned et) {
+    memset(f, 0xff, 6); memcpy(f + 6, src, 6); f[12] = et >> 8; f[13] = et & 0xff; return 14;
+}
+static void test_cap(void) {
+    struct iface ifc = IFC;
+    memcpy(ifc.mac, (uint8_t[]){ 0xf6, 0x75, 0x90, 0xb8, 0xf6, 0x91 }, 6);
+    inet_pton(AF_INET6, "2601:207:400:fd2::", &ifc.pfx6[0].addr); ifc.pfx6[0].plen = 64; ifc.npfx6 = 1;
+    struct hostlist hl = { 0 };
+    struct cap *c = cap_new(&ifc, &hl);
+    uint8_t dev[6] = { 0x24, 0xee, 0x5d, 6, 0x32, 0x78 }, router[6] = { 0x60, 0xbe, 0xb4, 3, 0x1e, 0xc6 };
+    uint8_t f[128];
+
+    /* ARP reply from a device */
+    int n = eth(f, dev, 0x0806);
+    uint8_t arp[28] = { 0, 1, 8, 0, 6, 4, 0, 2 };
+    memcpy(arp + 8, dev, 6); inet_pton(AF_INET, "192.168.0.153", arp + 14);
+    memcpy(f + n, arp, 28);
+    cap_frame(c, f, n + 28);
+    CHECK(hl.n == 1 && !memcmp(hl.h[0].mac, dev, 6));
+    /* ARP request from another host also reveals it; sender 0.0.0.0 (probe) does not */
+    arp[7] = 1; memcpy(arp + 8, router, 6); inet_pton(AF_INET, "192.168.0.1", arp + 14);
+    memcpy(f + n, arp, 28); cap_frame(c, f, n + 28);
+    CHECK(hl.n == 2);
+    uint8_t other[6] = { 2, 2, 2, 2, 2, 2 };
+    memcpy(arp + 8, other, 6); memset(arp + 14, 0, 4); memcpy(f + n, arp, 28); cap_frame(c, f, n + 28);
+    CHECK(hl.n == 2);
+    /* off-subnet sender and our own MAC are ignored */
+    inet_pton(AF_INET, "10.0.0.5", arp + 14); memcpy(f + n, arp, 28); cap_frame(c, f, n + 28);
+    CHECK(hl.n == 2);
+    n = eth(f, ifc.mac, 0x0806); arp[7] = 2; memcpy(arp + 8, ifc.mac, 6); inet_pton(AF_INET, "192.168.0.228", arp + 14);
+    memcpy(f + n, arp, 28); cap_frame(c, f, n + 28);
+    CHECK(hl.n == 2);
+
+    /* IPv6 from the TV's link-local: attributed to the same row as its ARP reply */
+    n = eth(f, dev, 0x86dd);
+    memset(f + n, 0, 40); f[n] = 0x60; f[n + 6] = 58; f[n + 7] = 255;
+    inet_pton(AF_INET6, "fe80::26ee:5dff:fe06:3278", f + n + 8);
+    inet_pton(AF_INET6, "ff02::1", f + n + 24);
+    cap_frame(c, f, n + 40);
+    CHECK(hl.n == 2 && hl.h[0].n6 == 1);
+    /* global address inside our prefix: accepted. Outside it (forwarded by the router): not */
+    inet_pton(AF_INET6, "2601:207:400:fd2:1234::5", f + n + 8); cap_frame(c, f, n + 40);
+    CHECK(hl.h[0].n6 == 2);
+    n = eth(f, router, 0x86dd);
+    memset(f + n, 0, 40); f[n] = 0x60; f[n + 6] = 6;
+    inet_pton(AF_INET6, "2a03:2880:f12f:83:face:b00c::25de", f + n + 8);     /* some internet host via the router */
+    cap_frame(c, f, n + 40);
+    CHECK(hl.n == 2 && hl.h[1].n6 == 0);
+    /* unspecified / multicast sources, multicast source MAC, bad version, short frames */
+    inet_pton(AF_INET6, "::", f + n + 8); cap_frame(c, f, n + 40);
+    inet_pton(AF_INET6, "ff02::fb", f + n + 8); cap_frame(c, f, n + 40);
+    CHECK(hl.h[1].n6 == 0);
+    f[6] |= 1; inet_pton(AF_INET6, "fe80::9", f + n + 8); cap_frame(c, f, n + 40);
+    CHECK(hl.n == 2);
+    f[6] &= ~1; f[n] = 0x40; cap_frame(c, f, n + 40);
+    CHECK(hl.h[1].n6 == 0);
+    for (int cut = 0; cut < n + 40; cut++) cap_frame(c, f, cut);
+    CHECK(hl.n == 2);
+    cap_close(c);
+    free(hl.h);
 }
 
 /* ---- NetBIOS ---- */
@@ -328,6 +476,95 @@ static void test_util(void) {
     CHECK(!in_subnet(&IFC, in));
 }
 
+/* ---- HTTP request line ---- */
+static void test_http(void) {
+    char path[64];
+    CHECK(http_parse_request("GET /metrics HTTP/1.1\r\nHost: x\r\n\r\n", path, sizeof path) == 0); CHECK_STR(path, "/metrics");
+    CHECK(http_parse_request("HEAD /devices.json?x=1 HTTP/1.0\r\n", path, sizeof path) == 0); CHECK_STR(path, "/devices.json");
+    CHECK(http_parse_request("GET / HTTP/1.1\r\n", path, sizeof path) == 0); CHECK_STR(path, "/");
+    CHECK(http_parse_request("POST /metrics HTTP/1.1\r\n", path, sizeof path) != 0);
+    CHECK(http_parse_request("GET metrics HTTP/1.1\r\n", path, sizeof path) != 0);
+    CHECK(http_parse_request("GET  HTTP/1.1\r\n", path, sizeof path) != 0);
+    char longreq[300] = "GET /";
+    memset(longreq + 5, 'a', 200); strcpy(longreq + 205, " HTTP/1.1\r\n");
+    CHECK(http_parse_request(longreq, path, sizeof path) != 0);               /* path too long for buffer */
+}
+
+/* ---- watch state machine, metrics, JSON, persistence ---- */
+static void test_watch(void) {
+    struct watch w = { 0 };
+    struct kvlist aliases = { 0 }, cache = { 0 };
+    (void)aliases; (void)cache;
+    reset_hosts();
+    for (int i = 0; i < HL.n; i++) { HL.h[i].name = "dev"; HL.h[i].src = "mdns"; HL.h[i].vendor = "Acme \"Quoted\" Co"; }
+    HL.h[0].name = "Router\nwith newline"; HL.h[0].known = true;
+    /* scan 1: everything is new */
+    CHECK(watch_update(&w, &HL, 1000, true) == 4);
+    CHECK(w.n == 4 && w.scans == 1 && w.v[0].first == 1000 && w.v[0].online);
+    /* scan 2: one device missing -> not offline yet; scans 3,4 -> offline after 3 misses */
+    int removed = HL.n - 1; HL.n--;
+    CHECK(watch_update(&w, &HL, 1060, true) == 0);
+    CHECK(!w.v[removed].online && w.v[removed].misses == 1 && w.v[removed].last == 1000);
+    watch_update(&w, &HL, 1120, true);
+    watch_update(&w, &HL, 1180, true);
+    CHECK(w.v[removed].misses == 3);
+    /* it comes back: last updated, misses reset, no duplicate row */
+    HL.n++;
+    CHECK(watch_update(&w, &HL, 1240, true) == 0);
+    CHECK(w.n == 4 && w.v[removed].online && w.v[removed].misses == 0 && w.v[removed].last == 1240);
+
+    static char out[1 << 16];
+    watch_metrics(&w, out, sizeof out);
+    CHECK(strstr(out, "lan_devices_online 4\n") != NULL);
+    CHECK(strstr(out, "lan_scans_total 5\n") != NULL);
+    CHECK(strstr(out, "name=\"Router with newline\"") != NULL);             /* control chars sanitized at update */
+    CHECK(strstr(out, "vendor=\"Acme \\\"Quoted\\\" Co\"") != NULL);     /* quotes escaped */
+    CHECK(strstr(out, "known=\"true\"") != NULL && strstr(out, "known=\"false\"") != NULL);
+    CHECK(strstr(out, "# TYPE lan_device_online gauge") != NULL);
+    /* online gauge is still 1 for a device missing fewer than 3 scans */
+    HL.n--;
+    watch_update(&w, &HL, 1300, true);
+    watch_metrics(&w, out, sizeof out);
+    char needle[64]; snprintf(needle, sizeof needle, "mac=\"%s\"", w.v[removed].mac);
+    char *line = strstr(out, needle); CHECK(line && strstr(line, "} 1\n") < strchr(line, '\n'));
+    HL.n++;
+
+    watch_json(&w, out, sizeof out);
+    CHECK(strstr(out, "\"name\":\"Router with newline\"") != NULL);
+    CHECK(strstr(out, "\"vendor\":\"Acme \\\"Quoted\\\" Co\"") != NULL);
+    CHECK(strstr(out, "\"known\":true") != NULL && strstr(out, "\"online\":true") != NULL);
+    CHECK(out[strlen(out) - 2] == '}');
+
+    /* escaping of characters that survive sanitization, plus a raw control char injected into state */
+    cpy(w.v[1].name, sizeof w.v[1].name, "tab\there \"q\" back\\slash");
+    watch_metrics(&w, out, sizeof out);
+    CHECK(strstr(out, "name=\"tab\there \\\"q\\\" back\\\\slash\"") != NULL);   /* Prometheus: only \\ and \" escaped */
+    watch_json(&w, out, sizeof out);
+    CHECK(strstr(out, "\"name\":\"tab\\there \\\"q\\\" back\\\\slash\"") != NULL);
+    cpy(w.v[1].name, sizeof w.v[1].name, "dev");
+
+    /* a tiny output buffer must truncate, never overflow */
+    char small[40]; memset(small, 'x', sizeof small);
+    watch_metrics(&w, small, sizeof small); CHECK(strlen(small) < sizeof small);
+    watch_json(&w, small, sizeof small);    CHECK(strlen(small) < sizeof small);
+
+    /* persistence round trip */
+    char path[] = "/tmp/lan-devices-seen-XXXXXX";
+    int fd = mkstemp(path); CHECK(fd >= 0); close(fd);
+    CHECK(watch_save(&w, path) == 0);
+    struct watch w2 = { 0 };
+    watch_load(&w2, path);
+    CHECK(w2.n == 4);
+    CHECK(w2.v[0].first == 1000 && w2.v[0].last == 1300 && !w2.v[0].online);
+    CHECK_STR(w2.v[0].name, "Router with newline");
+    CHECK_STR(w2.v[1].name, "dev");
+    /* a device known from the file is not "new" on the first scan after restart */
+    CHECK(watch_update(&w2, &HL, 2000, true) == 0);
+    CHECK(w2.v[0].first == 1000 && w2.v[0].online);
+    unlink(path);
+    free(w.v); free(w2.v);
+}
+
 static void dump_corpus(const char *dir) {
     struct pb p; char path[512];
     build_mdns_response(&p);
@@ -347,10 +584,15 @@ int main(int argc, char **argv) {
     test_dns_name();
     test_txt();
     test_mdns();
+    test_ip6_model();
+    test_nd6();
+    test_cap();
     test_nbns();
     test_oui();
     test_store();
     test_util();
+    test_http();
+    test_watch();
     free(HL.h);
     printf("%d checks, %d failures\n", checks, fails);
     return fails ? 1 : 0;
