@@ -99,7 +99,7 @@ the scanner's own poll loop:
 alert is simply:
 
 ```
-lan_device_online{known="false"} == 1 and (time() - lan_device_first_seen_seconds) < 600
+lan_device_online{known="false"} == 1 and on(mac) (time() - lan_device_first_seen_seconds) < 600
 ```
 
 Label a device with `lan-devices --add` and it becomes known on the next scan.
