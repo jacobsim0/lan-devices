@@ -1,9 +1,14 @@
-/* IPv6 discovery. There is no IPv6 equivalent of an ARP sweep (2^64 addresses
- * per link), so we ping the all-nodes multicast group ff02::1 from our
- * link-local address; every host that answers reveals its MAC and link-local
- * address to cap.c. Hosts that don't answer multicast pings (Windows, by
- * default) are still caught passively from their own neighbour discovery,
- * MLD and mDNS traffic during the listen window. */
+/* nd6.c — the IPv6 probe.
+ *
+ * There is no IPv6 equivalent of an ARP sweep (2^64 addresses per link), so we
+ * ping the all-nodes multicast group ff02::1 from our link-local address;
+ * every host that answers reveals its MAC and link-local address to cap.c.
+ * Hosts that ignore multicast pings (Windows, by default) are still caught
+ * passively from their own neighbour discovery, MLD and mDNS traffic while
+ * the capture stays open.
+ *
+ * Owns: the 70-byte Ethernet + IPv6 + ICMPv6 echo frame and its checksum
+ *       (ICMPv6 checksums cover a pseudo-header with both addresses). */
 #include "lan.h"
 #include <string.h>
 #include <arpa/inet.h>

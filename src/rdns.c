@@ -1,6 +1,10 @@
-/* Reverse DNS without threads or getnameinfo(): one UDP socket, a PTR query
- * per host to the nameservers in /etc/resolv.conf, answers parsed on the main
- * poll loop. A slow resolver therefore costs nothing beyond the listen window. */
+/* rdns.c — reverse DNS without getnameinfo() or threads.
+ *
+ * One UDP socket, a PTR query per host to the nameservers in /etc/resolv.conf,
+ * answers parsed on the main poll loop like everything else. A slow resolver
+ * therefore costs nothing beyond the listen window, which is why the standard
+ * blocking resolver is not used. IPv6-only hosts are looked up by their
+ * global address (link-local addresses are never in DNS). */
 #include "lan.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -77,6 +81,8 @@ void rdns_query(struct rdns *r) {
     }
 }
 
+/* Match answers to hosts by transaction id: id = base + index of the host in
+ * the list, so no table is needed and a stray answer can't be mis-filed. */
 void rdns_recv(struct rdns *r) {
     if (!r || r->fd < 0) return;
     uint8_t p[2048];

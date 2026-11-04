@@ -1,5 +1,13 @@
-/* --watch: scan every N seconds, remember every device ever seen, log joins
- * and departures, and expose the state as Prometheus metrics and JSON. */
+/* watch.c — the long-running mode.
+ *
+ * Owns: the list of every device ever seen (struct seen), the event log
+ *       (new / online / offline), the `seen` file that persists it across
+ *       restarts, and the /metrics and /devices.json renderers.
+ * Rule: a device is "offline" only after OFFLINE_AFTER consecutive missed
+ *       scans, so a phone that sleeps through one scan does not flap. The
+ *       headline lan_devices_online uses the same rule.
+ * Gotcha: names and vendors are sanitized on the way in, and label values are
+ *       escaped on the way out; both come from the network. */
 #include "lan.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -73,6 +81,10 @@ static void event(double now, const char *what, const struct seen *s) {
     fflush(stdout);
 }
 
+/* Merge one scan's host rows into the long-lived device list and log what
+ * changed. Three transitions matter: a MAC never seen before ("new"), a MAC
+ * that had been missing for OFFLINE_AFTER scans and answered again ("online"),
+ * and a MAC that just reached OFFLINE_AFTER misses ("offline"). */
 int watch_update(struct watch *w, const struct hostlist *hl, double now, bool show_vendor) {
     int new_devices = 0;
     for (int i = 0; i < w->n; i++) w->v[i].online = false;

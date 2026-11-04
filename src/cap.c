@@ -1,6 +1,16 @@
-/* Link-layer capture and injection via libpcap. One handle serves the IPv4 ARP
- * sweep, the IPv6 echo probe, and passive discovery: every ARP frame and every
- * on-link IPv6 frame we see is attributed to its source MAC. */
+/* cap.c — the raw packet layer (libpcap).
+ *
+ * Owns: the one pcap handle used for the whole run: arp.c and nd6.c send
+ *       frames through cap_send(); every ARP or IPv6 frame that arrives is
+ *       passed to cap_frame(), which creates or updates the host row for its
+ *       source MAC. This is the only file that needs root (to open the
+ *       interface); main.c drops root right after cap_open().
+ * Gotcha: a frame is only attributed when its source is really a neighbour
+ *       (link-local, or inside one of our IPv6 prefixes, or in our IPv4
+ *       subnet). Otherwise traffic the router forwards from the internet
+ *       would be credited to the router's MAC.
+ * Tests: cap_new() builds the struct without pcap so cap_frame() can be fed
+ *       crafted frames. */
 #include "lan.h"
 #include <pcap/pcap.h>
 #include <stdio.h>
@@ -71,7 +81,7 @@ void cap_frame(struct cap *c, const uint8_t *b, int len) {
         memcpy(&ip, ar + 14, 4);
         if (!ip.s_addr || ip.s_addr == c->ifc->ip.s_addr || !in_subnet(c->ifc, ip)) return;
         hosts_add4(c->hl, ar + 8, ip);
-    } else if (et == 0x86dd && len >= 54) {                    /* IPv6 */
+    } else if (et == 0x86dd && len >= 54) {                    /* IPv6: 14 Ethernet + 40 header */
         const uint8_t *ip6 = b + 14;
         if ((ip6[0] >> 4) != 6) return;
         struct in6_addr src;

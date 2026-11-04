@@ -1,5 +1,9 @@
-/* DNS wire-format helpers. Used by mDNS, reverse DNS and the unit tests.
- * All readers are bounds-checked; malformed input returns -1 / false. */
+/* dns.c — DNS wire format, shared by mdns.c, rdns.c and the tests.
+ *
+ * Owns: reading a (possibly compressed) name out of a packet, reading key=value
+ *       pairs out of a TXT record, and writing a dotted name into a question.
+ * Rule: every reader is bounds-checked and returns -1 / false on malformed
+ *       input; nothing here trusts a length byte. These functions are fuzzed. */
 #include "lan.h"
 #include <string.h>
 

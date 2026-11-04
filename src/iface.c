@@ -1,3 +1,12 @@
+/* iface.c — which interface, and what are its addresses.
+ *
+ * Owns: struct iface (name, index, IPv4 + mask, MAC, IPv6 link-local, on-link
+ *       IPv6 prefixes). Everything else reads this struct and never touches
+ *       the interface list again.
+ * How:  getifaddrs() for the list. The default interface is found with a
+ *       trick: "connect" a UDP socket to a public IP (no packet is sent) and
+ *       ask the kernel which local address it would use. VPN tunnels are
+ *       skipped because they have no Ethernet layer to scan. */
 #include "lan.h"
 #include <stdio.h>
 #include <string.h>

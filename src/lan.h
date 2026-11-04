@@ -1,5 +1,10 @@
-/* lan-devices — list devices on the LAN with the best name we can find.
- * Portable C (Linux + macOS). See README.md. */
+/* lan.h — the shared table of contents.
+ *
+ * C has no modules: each .c file is compiled alone and can only call what it
+ * has seen declared. Every struct and every cross-file function is declared
+ * here, and every .c file starts with #include "lan.h". If you want to know
+ * what a module offers, read its section below; if you want to know how the
+ * modules fit together, read ARCHITECTURE.md. */
 #ifndef LAN_H
 #define LAN_H
 #ifndef _GNU_SOURCE

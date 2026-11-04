@@ -1,7 +1,11 @@
-/* MAC vendor lookup from an IEEE OUI file. Accepts three formats:
+/* oui.c — MAC prefix to vendor name.
+ *
+ * Loads an IEEE OUI registry file into a sorted array and answers lookups by
+ * binary search, trying the longest prefix first (36, 28, then 24 bits).
+ * Accepts three file formats, so whichever one a system has will do:
  *   arp-scan ieee-oui.txt   "0000F0\tSAMSUNG ELECTRONICS CO., LTD."
  *   IEEE oui.txt            "00-00-0F   (hex)\t\tNEXT, INC."
- *   IEEE oui.csv            "MA-L,00000F,NEXT INC,..." (also MA-M/MA-S 28/36-bit) */
+ *   IEEE oui.csv            "MA-L,00000F,NEXT INC,..." (also MA-M/MA-S) */
 #include "lan.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -99,6 +103,8 @@ int oui_load(const char *path) {
     return N;
 }
 
+/* Longest prefix first: a 36-bit (MA-S) or 28-bit (MA-M) block assigned to a
+ * small vendor sits inside a 24-bit block registered to the IEEE itself. */
 const char *oui_lookup(const uint8_t *mac) {
     if (!N) return NULL;
     char hex[13];

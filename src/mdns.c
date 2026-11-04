@@ -1,9 +1,21 @@
-/* mDNS / DNS-SD without Avahi or Bonjour libraries: we multicast our own
- * queries to 224.0.0.251:5353 and parse whatever comes back.
+/* mdns.c — multicast DNS, done by hand (no Avahi, no Bonjour library).
+ *
+ * We multicast our own queries to 224.0.0.251 and ff02::fb on port 5353 and
+ * parse whatever comes back:
  *   - PTR queries for well-known service types -> instance names (AirPlay,
  *     Chromecast fn=, HomeKit, printers, Sonos, SMB) and model strings
- *   - reverse PTR (x.x.x.x.in-addr.arpa) -> hostname.local
- *   - any A record seen in additional sections -> hostname for that IP */
+ *   - reverse PTR (in-addr.arpa / ip6.arpa) -> hostname.local
+ *   - any A / AAAA record we see -> hostname for that address
+ *
+ * Owns: the two sockets, the query packets, and three small tables filled
+ *       while listening (service instances, A/AAAA records, reverse answers).
+ *       mdns_finish() is where those tables are joined: each service instance
+ *       is followed to its SRV target, the target to an address, the address
+ *       to a host row, and the DEFS[] table says which service types give the
+ *       best names. Nothing is written into host rows before finish().
+ * Gotcha: binding port 5353 is shared with the system's own mDNS daemon via
+ *       SO_REUSEPORT; if that fails we fall back to an ephemeral port and set
+ *       the "unicast reply" bit on our questions. */
 #include "lan.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -135,6 +147,9 @@ static bool ends_with(const char *s, const char *suf) {
     return a >= b && !strcmp(s + a - b, suf);
 }
 
+/* Parse one mDNS packet into the three tables. Nothing is decided here; every
+ * record is just filed by type so finish() can join them in any arrival order
+ * (a TXT record often arrives before the PTR that names its service). */
 void mdns_handle(struct mdns *m, const uint8_t *p, int len) {
     if (!m || len < 12 || !(dns_u16(p, 2) & 0x8000)) return;      /* responses only */
     int qd = dns_u16(p, 4), rr = dns_u16(p, 6) + dns_u16(p, 8) + dns_u16(p, 10);
@@ -325,6 +340,10 @@ static struct arec *find_a(struct mdns *m, const char *host) {
     return NULL;
 }
 
+/* Join everything we heard into the host rows. Runs once, after listening.
+ * Order matters: reverse answers are the most direct hostname, A/AAAA records
+ * are a fallback, and service instances are resolved last because they need
+ * the address tables to be complete (instance -> SRV target -> address -> row). */
 void mdns_finish(struct mdns *m) {
     if (!m) return;
     /* hostnames: reverse answers first, then any A record we saw */
@@ -370,6 +389,8 @@ void mdns_finish(struct mdns *m) {
             if (d->strip_at && (at = strchr(fn, '@'))) memmove(fn, at + 1, strlen(at + 1) + 1);
             if (!strcmp(d->type, "_workstation._tcp.local") && (at = strstr(fn, " ["))) *at = 0;
         }
+        /* several services can name one device (AirPlay + RAOP + companion-link);
+         * the highest-priority type in DEFS[] wins, ties keep the first seen */
         if (fn[0] && d->pri > h->svc_pri) { cpy(h->svc, sizeof h->svc, fn); h->svc_pri = d->pri; }
         if (d->modelkey && !h->model[0]) {
             char md[NAME_LEN];

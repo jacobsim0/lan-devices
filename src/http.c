@@ -1,6 +1,11 @@
-/* A deliberately tiny HTTP/1.0 server for --watch. One listening socket,
- * requests answered inline from the poll loop (they are a few bytes and the
- * responses are small), so the scanner never needs a thread. */
+/* http.c — a deliberately tiny HTTP/1.0 server for --watch.
+ *
+ * One listening socket. Requests are answered inline from the poll loop (they
+ * are a few bytes and the responses are small), so the scanner never needs a
+ * thread. idle_ms() is the sleep every other module uses: it waits on this
+ * socket instead of sleeping blind, so /metrics stays responsive mid-scan.
+ * Gotcha: on BSD/macOS accepted sockets inherit O_NONBLOCK from the listener;
+ * we clear it or an early recv() would return nothing. */
 #include "lan.h"
 #include <stdio.h>
 #include <stdlib.h>

@@ -1,5 +1,8 @@
-/* NetBIOS name service: send a NBSTAT ("*") query to every host; Windows boxes,
- * Samba shares and some NAS units answer with their computer name. */
+/* nbns.c — NetBIOS names.
+ *
+ * Sends a NBSTAT ("*") query to UDP port 137 of every IPv4 host; Windows boxes,
+ * Samba shares and some NAS units answer with their computer name. The reply
+ * lists several names; we take the first "unique workstation" one. */
 #include "lan.h"
 #include <stdio.h>
 #include <stdlib.h>

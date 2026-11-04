@@ -1,5 +1,10 @@
-/* Aliases (your labels) and the learned-name cache. Tab-separated "mac\tname",
- * identical to the original bash tool, so existing files keep working. */
+/* store.c — the files in ~/.config/lan-devices.
+ *
+ * Owns: the config directory (under sudo, the *calling* user's home, found via
+ *       SUDO_USER), the aliases file (your labels), the cache file (names
+ *       learned on earlier runs) and the watch-state path. Files are
+ *       tab-separated "mac<TAB>name", the same format the original bash tool
+ *       used, written atomically (temp file + rename). */
 #include "lan.h"
 #include <stdio.h>
 #include <stdlib.h>

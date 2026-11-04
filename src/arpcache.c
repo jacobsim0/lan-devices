@@ -1,5 +1,14 @@
-/* Passive discovery: read the kernel's ARP (IPv4) and neighbour (IPv6) tables.
- * No root needed; only shows devices this machine has talked to recently. */
+/* arpcache.c — discovery without root.
+ *
+ * Reads the devices the OS already knows: its ARP table (IPv4) and neighbour
+ * table (IPv6). Only devices this machine has talked to recently appear, which
+ * is why the full sweep is preferred. Used when --passive is given or when
+ * libpcap cannot be opened.
+ *
+ * Linux: /proc/net/arp for IPv4, rtnetlink RTM_GETNEIGH for IPv6 (there is
+ *        no text table for IPv6 neighbours).
+ * macOS: the routing sysctl for both families; if that returns nothing (seen
+ *        under some sandboxes) it execs arp(8) / ndp(8) directly, no shell. */
 #include "lan.h"
 #include <stdio.h>
 #include <stdlib.h>

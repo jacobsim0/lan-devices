@@ -1,13 +1,20 @@
-/* lan-devices — list devices on the local network with the best name we can find.
+/* main.c — the conductor.
  *
- * Name sources, in priority order:
+ * Owns: command-line flags, the order of the scan steps, name priority, the
+ *       printed table, and the --watch loop.
+ * Flow: iface_detect -> cap_open (root) -> drop_privs -> discover() ->
+ *       name_hosts() -> print_table()   (or watch_loop() instead of printing)
+ *
+ * discover() is one scan: find who is up (arp.c + nd6.c through cap.c, or
+ * arpcache.c without root), then run mdns.c, nbns.c and rdns.c on one poll()
+ * loop for a few seconds. name_hosts() then picks each row's name:
  *   1. aliases file                    (your own labels, keyed by MAC)
  *   2. mDNS service names              (Chromecast fn=, AirPlay/HomeKit "Office speaker")
  *   3. mDNS hostname                   (Apple/Linux/printers: "iPhone")
  *   4. NetBIOS                         (Windows, Samba)
  *   5. reverse DNS
- *   6. cached name from a previous run (device asleep now, e.g. idle iPhone)
- */
+ *   6. this machine's own hostname     (for our own row)
+ *   7. cached name from a previous run (device asleep now, e.g. idle iPhone) */
 #include "lan.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -100,6 +107,9 @@ static void discover(const struct iface *ifc, struct cap *cap, const struct opts
                             { mdns_fd6(md), POLLIN, 0 }, { http_fd(), POLLIN, 0 } };
     double t0 = now_s(), deadline = t0 + o->listen_s;
     bool requeried = false;
+    /* The listen window. Each fd is drained when readable; cap_poll() runs every
+     * pass because pcap has no fd we can rely on across platforms; after one
+     * second every module re-sends its questions once for hosts still unnamed. */
     for (double now; (now = now_s()) < deadline;) {
         int ms = (int)((deadline - now) * 1000);
         poll(pf, 5, ms < 100 ? ms : 100);
@@ -184,6 +194,10 @@ static void http_route(const char *path, char *body, size_t sz, const char **cty
     else if (!strcmp(path, "/")) snprintf(body, sz, "lan-devices watch: %d devices known, %u scans\n\n/metrics\n/devices.json\n/healthz\n", WATCH.n, WATCH.scans);
 }
 
+/* --watch: discover + name on a timer, feed watch.c, serve HTTP in the gaps.
+ * The capture handle and the OUI table are opened once; everything else
+ * (host list, aliases, cache) is reloaded every cycle so edits to the files
+ * take effect without a restart. */
 static int watch_loop(const struct iface *ifc, struct cap *cap, const struct opts *o) {
     char err[256];
     if (http_start(o->listen, http_route, err, sizeof err) != 0) die("%s", err);

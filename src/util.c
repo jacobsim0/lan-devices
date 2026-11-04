@@ -1,3 +1,9 @@
+/* util.c — small helpers every module uses.
+ *
+ * Owns: the host table (hosts_by_mac / hosts_add4 / hosts_add6 / hosts_find*),
+ *       bounded string copy, the monotonic clock, MAC formatting, terminal
+ *       width of UTF-8 names, the privilege drop after libpcap opens, and the
+ *       IPv6 helpers (on-link check, reverse-name formatting). */
 #include "lan.h"
 #include <stdio.h>
 #include <stdlib.h>

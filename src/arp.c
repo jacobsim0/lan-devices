@@ -1,5 +1,9 @@
-/* IPv4 sweep: one ARP request per address in the subnet, two passes, then
- * linger for stragglers. Replies are attributed by cap.c. */
+/* arp.c — the IPv4 sweep.
+ *
+ * Owns: building an ARP "who has X?" request and sending one to every address
+ *       in the subnet, two passes (the second only to non-responders), then a
+ *       short linger. Replies are not handled here: cap.c sees them and adds
+ *       the rows. Sleeps go through idle_ms() so --watch keeps serving HTTP. */
 #include "lan.h"
 #include <stdlib.h>
 #include <string.h>
