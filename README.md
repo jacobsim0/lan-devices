@@ -99,10 +99,18 @@ the scanner's own poll loop:
 alert is simply:
 
 ```
-lan_device_online{known="false"} == 1 and on(mac) (time() - lan_device_first_seen_seconds) < 600
+lan_device_online{known="false",vendor!="(private MAC)"} == 1
+  and on(mac) (time() - lan_device_first_seen_seconds) < 600
 ```
 
 Label a device with `lan-devices --add` and it becomes known on the next scan.
+Phones with randomized MACs rotate them, so every rotation looks like a new
+device; the expression above leaves them out of the alert (they still appear
+in the metrics and on the dashboard). A device could hide behind a
+locally-administered MAC on purpose, which is the trade-off.
+
+`lan_devices_online` uses the same three-miss hysteresis as the per-device
+gauge, so a phone that sleeps through one scan doesn't make the total flap.
 The container image and Kubernetes manifests are described in `deploy/`.
 
 ## How discovery works

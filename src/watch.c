@@ -121,7 +121,7 @@ static void label(char *out, size_t sz, const char *s) {
 void watch_metrics(const struct watch *w, char *out, size_t sz) {
     size_t o = 0;
     int online = 0;
-    for (int i = 0; i < w->n; i++) online += w->v[i].online;
+    for (int i = 0; i < w->n; i++) online += (w->v[i].online || w->v[i].misses < OFFLINE_AFTER);
     EMIT("# HELP lan_device_online 1 if the device answered in the latest scan, 0 if it has been missing for %d scans.\n", OFFLINE_AFTER);
     EMIT("# TYPE lan_device_online gauge\n");
     EMIT("# HELP lan_device_last_seen_seconds Unix time the device last answered.\n# TYPE lan_device_last_seen_seconds gauge\n");
@@ -137,7 +137,7 @@ void watch_metrics(const struct watch *w, char *out, size_t sz) {
         EMIT("lan_device_last_seen_seconds{mac=\"%s\",name=\"%s\"} %.0f\n", s->mac, name, s->last);
         EMIT("lan_device_first_seen_seconds{mac=\"%s\",name=\"%s\"} %.0f\n", s->mac, name, s->first);
     }
-    EMIT("# HELP lan_devices_online Devices that answered in the latest scan.\n# TYPE lan_devices_online gauge\nlan_devices_online %d\n", online);
+    EMIT("# HELP lan_devices_online Devices currently considered online (answered within the last %d scans).\n# TYPE lan_devices_online gauge\nlan_devices_online %d\n", OFFLINE_AFTER, online);
     EMIT("# HELP lan_devices_known_total Devices ever seen.\n# TYPE lan_devices_known_total gauge\nlan_devices_known_total %d\n", w->n);
     EMIT("# HELP lan_scans_total Completed scans since start.\n# TYPE lan_scans_total counter\nlan_scans_total %u\n", w->scans);
     EMIT("# HELP lan_scan_duration_seconds Duration of the latest scan.\n# TYPE lan_scan_duration_seconds gauge\nlan_scan_duration_seconds %.2f\n", w->last_scan_dur);
