@@ -37,7 +37,8 @@ void watch_load(struct watch *w, const char *path) {
         if (fld[3]) cpy(s->name, sizeof s->name, fld[3]);
         if (fld[4]) cpy(s->ip, sizeof s->ip, fld[4]);
         if (fld[5]) cpy(s->vendor, sizeof s->vendor, fld[5]);
-        if (!strcmp(s->name, s->ip)) s->name[0] = 0;              /* heal files written by the strtok version */
+        struct in_addr a4; struct in6_addr a6;                    /* heal files written by the strtok version: */
+        if (inet_pton(AF_INET, s->name, &a4) == 1 || inet_pton(AF_INET6, s->name, &a6) == 1) s->name[0] = 0;   /* an address is not a name */
         s->online = false;
         s->misses = OFFLINE_AFTER;
     }

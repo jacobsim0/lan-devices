@@ -568,13 +568,16 @@ static void test_watch(void) {
     CHECK_STR(w2.v[1].name, "dev");
     /* an unnamed device round-trips with an empty name, not the next field (strtok regression) */
     f = fopen(path, "w");
-    fputs("aa:aa:aa:aa:aa:01\t100\t200\t\t192.168.0.9\tAcme\naa:aa:aa:aa:aa:02\t100\t200\t192.168.0.8\t192.168.0.8\tAcme\n", f);
+    fputs("aa:aa:aa:aa:aa:01\t100\t200\t\t192.168.0.9\tAcme\naa:aa:aa:aa:aa:02\t100\t200\t192.168.0.8\t192.168.0.8\tAcme\n"
+          "aa:aa:aa:aa:aa:03\t100\t200\tfe80::1\t192.168.0.7\tAcme\naa:aa:aa:aa:aa:04\t100\t200\tReal Name\t192.168.0.6\tAcme\n", f);
     fclose(f);
     struct watch w3 = { 0 };
     watch_load(&w3, path);
-    CHECK(w3.n == 2);
+    CHECK(w3.n == 4);
     CHECK_STR(w3.v[0].name, ""); CHECK_STR(w3.v[0].ip, "192.168.0.9"); CHECK_STR(w3.v[0].vendor, "Acme");
-    CHECK_STR(w3.v[1].name, "");                                  /* healed: name that equals the ip is dropped */
+    CHECK_STR(w3.v[1].name, "");                                  /* healed: a name that is an IPv4 address is dropped */
+    CHECK_STR(w3.v[2].name, "");                                  /* healed: a stale IPv6 address too */
+    CHECK_STR(w3.v[3].name, "Real Name");
     free(w3.v);
     watch_save(&w, path);
     w2.n = 0; watch_load(&w2, path);
