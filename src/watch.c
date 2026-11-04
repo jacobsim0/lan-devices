@@ -26,16 +26,18 @@ void watch_load(struct watch *w, const char *path) {
     if (!f) return;
     char line[1024];
     while (fgets(line, sizeof line, f)) {
-        char *fld[6] = { 0 };
+        line[strcspn(line, "\n")] = 0;
+        char *fld[6] = { 0 }, *rest = line;
         int n = 0;
-        for (char *p = strtok(line, "\t\n"); p && n < 6; p = strtok(NULL, "\t\n")) fld[n++] = p;
-        if (n < 3) continue;
+        while (n < 6 && rest) fld[n++] = strsep(&rest, "\t");   /* strsep keeps empty fields; strtok would not */
+        if (n < 3 || !fld[0][0]) continue;
         struct seen *s = seen_get(w, fld[0]);
         s->first = atof(fld[1]);
         s->last = atof(fld[2]);
         if (fld[3]) cpy(s->name, sizeof s->name, fld[3]);
         if (fld[4]) cpy(s->ip, sizeof s->ip, fld[4]);
         if (fld[5]) cpy(s->vendor, sizeof s->vendor, fld[5]);
+        if (!strcmp(s->name, s->ip)) s->name[0] = 0;              /* heal files written by the strtok version */
         s->online = false;
         s->misses = OFFLINE_AFTER;
     }

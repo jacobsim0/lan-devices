@@ -561,10 +561,24 @@ static void test_watch(void) {
     CHECK(watch_save(&w, path) == 0);
     struct watch w2 = { 0 };
     watch_load(&w2, path);
+    FILE *f;
     CHECK(w2.n == 4);
     CHECK(w2.v[0].first == 1000 && w2.v[0].last == 1300 && !w2.v[0].online);
     CHECK_STR(w2.v[0].name, "Router with newline");
     CHECK_STR(w2.v[1].name, "dev");
+    /* an unnamed device round-trips with an empty name, not the next field (strtok regression) */
+    f = fopen(path, "w");
+    fputs("aa:aa:aa:aa:aa:01\t100\t200\t\t192.168.0.9\tAcme\naa:aa:aa:aa:aa:02\t100\t200\t192.168.0.8\t192.168.0.8\tAcme\n", f);
+    fclose(f);
+    struct watch w3 = { 0 };
+    watch_load(&w3, path);
+    CHECK(w3.n == 2);
+    CHECK_STR(w3.v[0].name, ""); CHECK_STR(w3.v[0].ip, "192.168.0.9"); CHECK_STR(w3.v[0].vendor, "Acme");
+    CHECK_STR(w3.v[1].name, "");                                  /* healed: name that equals the ip is dropped */
+    free(w3.v);
+    watch_save(&w, path);
+    w2.n = 0; watch_load(&w2, path);
+
     /* a device known from the file is not "new" on the first scan after restart */
     CHECK(watch_update(&w2, &HL, 2000, true) == 0);
     CHECK(w2.v[0].first == 1000 && w2.v[0].online);
